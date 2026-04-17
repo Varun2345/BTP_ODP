@@ -16,6 +16,12 @@ from groq import Groq
 import google.generativeai as genai
 import json
 import requests
+import shutil
+import uuid
+import sys
+
+# Import our new pipeline logic
+from disfluency_pipeline import run_pipeline
 
 app = FastAPI(title="OPD Conversation Assistant API")
 
@@ -29,7 +35,8 @@ app.add_middleware(
 )
 
 # Initialize Groq Client
-groq_client = Groq()
+groq_api_key = os.getenv("GROQ_API_KEY", "your-default-key")
+groq_client = Groq(api_key=groq_api_key)
 
 # Initialize Gemini Client (Requires GEMINI_API_KEY in .env)
 gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -44,10 +51,6 @@ if gemini_api_key and "your_" not in gemini_api_key:
 # Initialize Sarvam Client
 sarvam_api_key = os.getenv("SARVAM_API_KEY")
 sarvam_configured = bool(sarvam_api_key and "your_" not in sarvam_api_key)
-
-# Initialize SQLite Database
-groq_client = Groq()
-
 
 # Initialize SQLite Database
 def init_db():
@@ -93,6 +96,32 @@ class TranslationRequest(BaseModel):
     target_lang: str
     speaker: str
     model_choice: Optional[str] = "gemini-2.5-flash"
+
+@app.post("/api/transcribe")
+async def transcribe_audio(audio: UploadFile = File(...)):
+    """Receives audio file from frontend, runs Whisper disfluency pipeline, returns text."""
+    temp_file = f"temp_{uuid.uuid4()}.webm"
+    
+    try:
+        with open(temp_file, "wb") as buffer:
+            shutil.copyfileobj(audio.file, buffer)
+            
+        print(f"DEBUG: Processing audio file {temp_file}")
+        
+        # Run Whisper pipeline
+        result = run_pipeline(temp_file)
+        
+        if result and "final_text" in result:
+            return {"transcription": result["final_text"]}
+        else:
+            return {"transcription": "", "error": "No speech detected"}
+            
+    except Exception as e:
+        print(f"Transcription error: {e}")
+        return {"transcription": "", "error": str(e)}
+    finally:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
 
 @app.post("/api/translate")
 async def translate_text(req: TranslationRequest):

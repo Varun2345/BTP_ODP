@@ -6,7 +6,7 @@ This project uses a React frontend and FastAPI Python backend.
 ### 1. Backend Setup
 1. Navigate to the backend folder:
    ```bash
-   cd OPD/backend
+   cd OPD/backend 
    ```
 2. Create a virtual environment (optional but recommended):
    ```bash
