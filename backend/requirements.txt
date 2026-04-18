@@ -6,3 +6,4 @@ groq
 google-generativeai
 requests
 python-multipart
+faster-whisper

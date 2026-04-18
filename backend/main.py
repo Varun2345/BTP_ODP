@@ -70,20 +70,33 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS consultation_summaries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            overall_summary TEXT,
-            symptoms TEXT,
-            duration TEXT,
-            suggested_tests TEXT,
+            overall_summary TEXT, -- Legacy
+            subjective TEXT,
+            objective TEXT,
+            assessment TEXT,
+            plan TEXT,
+            disfluency_level TEXT,
+            demeanor_note TEXT,
             full_transcript TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
     # Try to add the column in case the database already exists without it
-    try:
-        cursor.execute("ALTER TABLE consultation_summaries ADD COLUMN overall_summary TEXT")
-    except sqlite3.OperationalError:
-        pass # Column already exists
+    # Migrations for existing databases
+    new_cols = [
+        ("subjective", "TEXT"),
+        ("objective", "TEXT"),
+        ("assessment", "TEXT"),
+        ("plan", "TEXT"),
+        ("disfluency_level", "TEXT"),
+        ("demeanor_note", "TEXT")
+    ]
+    for col_name, col_type in new_cols:
+        try:
+            cursor.execute(f"ALTER TABLE consultation_summaries ADD COLUMN {col_name} {col_type}")
+        except sqlite3.OperationalError:
+            pass # Column already exists
     
     conn.commit()
     conn.close()
@@ -213,8 +226,8 @@ async def translate_text(req: TranslationRequest):
 class SummaryRequest(BaseModel):
     model_choice: Optional[str] = "llama-3.3-70b-versatile"
 
-@app.post("/api/summarize")
-async def summarize_consultation(req: SummaryRequest = SummaryRequest()):
+@app.get("/api/summarize")
+async def summarize_consultation(selected_model: str = "llama-3.3-70b-versatile", consultant_mode: str = "scribe"):
     """
     Actual Summarization using Groq or Gemini.
     1. Fetch all logs from the database
@@ -230,21 +243,95 @@ async def summarize_consultation(req: SummaryRequest = SummaryRequest()):
     print(f"DEBUG: Retrieved {len(logs)} logs from database for summarization.")
     if not logs:
         print("DEBUG: No conversation logs found. Returning error.")
-        return {"error": "No conversation logs found."}
+        return {"error": "No conversation logs found in database. Please click 'Translate & Send' or dictate a message first."}
 
     transcript = "\n".join([f"[{row[3]}] {row[0]}: {row[1]} (Translated: {row[2]})" for row in logs])
     print(f"DEBUG: Transcript generated:\n{transcript}")
     
+    if consultant_mode == "assistant":
+        system_instructions = """
+        You are an Expert Medical AI Assistant. Your task is to analyze the provided Doctor-Patient transcript and generate a comprehensive SOAP note. 
+
+        ### YOUR DUAL MISSION:
+        1. SCRIBE: Accurately summarize the conversation history, including patient demeanor based on disfluency markers ("um", "uh", "...", "......").
+        2. ADVISE: Use your medical knowledge to suggest potential assessments and clinical plans, even if the doctor did not explicitly state them during the brief encounter.
+
+        ### SECTION-SPECIFIC INSTRUCTIONS:
+        1. SUBJECTIVE (S): 
+           - Summarize the patient's complaints and history. 
+           - Use the disfluency markers to describe the patient's state (e.g., "appears in distress," "hesitant," or "pain-limited speech").
+        2. OBJECTIVE (O): 
+           - List any vitals or findings mentioned. 
+           - SUGGEST: List physical examinations the doctor SHOULD perform based on the patient's symptoms (label these as "Suggested Exams").
+        3. ASSESSMENT (A): 
+           - Provide a differential diagnosis based on the symptoms described. 
+           - Rank the most likely conditions (e.g., "Highly suspicious for Sciatica").
+        4. PLAN (P): 
+           - Propose a comprehensive management plan including appropriate imaging (MRI/X-ray), medications (NSAIDs, etc.), and follow-up care that matches standard medical protocols for these symptoms.
+
+        ### OUTPUT FORMAT:
+        Return ONLY a JSON object:
+        {
+          "subjective": "Summary of report + behavioral observations.",
+          "objective": "Recorded vitals + Suggested physical exams.",
+          "assessment": "Proactive clinical impressions and differential diagnoses.",
+          "plan": "Comprehensive suggested next steps and treatments.",
+          "metadata": {
+            "disfluency_level": "Low/Medium/High",
+            "clinical_confidence": "Percentage score of AI certainty"
+          }
+        }
+        """
+    else:  # scribe mode (default)
+        system_instructions = """
+        You are a Precise Medical Scribe. Your sole task is to summarize the provided Doctor-Patient transcript into a SOAP note. You must follow the "Zero-Inference Rule": Do not include any medical advice, diagnoses, or plans that were not explicitly stated by the participants in the audio.
+
+        ### TRANSCRIPT CONSTRAINTS:
+        - The transcript contains verbatim speech markers: "um", "uh", "...", and "......".
+        - Use these markers ONLY to assess the patient's demeanor in the Subjective section.
+        - STRIP these markers from all other clinical data points.
+
+        ### SECTION-SPECIFIC INSTRUCTIONS:
+        1. SUBJECTIVE (S): 
+           - ONLY include symptoms and history explicitly mentioned by the patient. 
+           - Mention the patient's demeanor (e.g., "appeared hesitant," "frequent pauses") based on the disfluency markers.
+           - If no symptoms were discussed, state "None mentioned."
+
+        2. OBJECTIVE (O): 
+           - ONLY include physical findings, vitals (BP, Temp), or observations explicitly stated by the doctor. 
+           - If the doctor did not perform an exam or state vitals, state "Not recorded."
+
+        3. ASSESSMENT (A): 
+           - ONLY include the diagnosis or clinical impression if the doctor explicitly named it. 
+           - Do not guess a diagnosis based on the symptoms. 
+           - If the doctor did not provide a diagnosis, state "Not discussed."
+
+        4. PLAN (P): 
+           - ONLY include medications, tests, or follow-ups that were explicitly mentioned by the doctor in the transcript. 
+           - If the doctor did not mention a plan, state "No plan discussed."
+
+        ### OUTPUT FORMAT:
+        Return ONLY a JSON object with this structure:
+        {
+          "subjective": "Clean summary of patient report and demeanor.",
+          "objective": "Strictly recorded findings or 'Not recorded'.",
+          "assessment": "Explicit diagnosis or 'Not discussed'.",
+          "plan": "Explicit next steps or 'No plan discussed'.",
+          "metadata": {
+            "disfluency_level": "Low/Medium/High",
+            "observation": "Brief note on speech patterns."
+          }
+        }
+        """
+
     prompt = f"""
-    You are an expert medical AI assistant. Analyze the following Doctor-Patient consultation transcript and summarize it.
-    Return ONLY a JSON object with the exact keys: 'overall_summary', 'symptoms', 'duration', 'suggested_tests'. Do not include markdown formatting or backticks around the json.
-    'overall_summary' should be a comprehensive paragraph detailing the main points of the entire conversation.
-    
-    Transcript:
+    {system_instructions}
+
+    ### TRANSCRIPT:
     {transcript}
     """
     
-    selected_model = getattr(req, "model_choice", "llama-3.3-70b-versatile")
+    # model is passed directly as an argument now
     
     try:
         if selected_model == "gemini-2.5-flash":
@@ -254,8 +341,8 @@ async def summarize_consultation(req: SummaryRequest = SummaryRequest()):
             summary_text = response.text.replace("```json", "").replace("```", "").strip()
             summary_data = json.loads(summary_text)
         else:
-            # Default to Groq models
-            actual_model = selected_model if "llama" in selected_model else "llama-3.3-70b-versatile"
+            # Default to provided Groq model or fallback safely
+            actual_model = selected_model if selected_model else "llama-3.3-70b-versatile"
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model=actual_model,
@@ -263,27 +350,34 @@ async def summarize_consultation(req: SummaryRequest = SummaryRequest()):
                 response_format={"type": "json_object"}
             )
             summary_text = chat_completion.choices[0].message.content.strip()
-            summary_data = json.loads(summary_text)
+            # Robust JSON cleaning
+            cleaned_text = summary_text
+            if "```json" in cleaned_text:
+                cleaned_text = cleaned_text.split("```json")[-1].split("```")[0].strip()
+            elif "```" in cleaned_text:
+                cleaned_text = cleaned_text.split("```")[-1].split("```")[0].strip()
+            
+            try:
+                summary_data = json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                # Attempt to find the first { and last } if parsing failed
+                import re
+                match = re.search(r"(\{.*\}|\[.*\])", cleaned_text, re.DOTALL)
+                if match:
+                    summary_data = json.loads(match.group(0))
+                else:
+                    raise ValueError("No valid JSON found in LLM response")
     except Exception as e:
-        print("Summarization error:", e)
-        try:
-             # Fallback to the latest available model if the old one is decommissioned
-            chat_completion = groq_client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model="llama-3.1-8b-instant",
-                temperature=0.2,
-                response_format={"type": "json_object"}
-            )
-            summary_text = chat_completion.choices[0].message.content.strip()
-            summary_data = json.loads(summary_text)
-        except Exception as e2:
-            print("Second Summarization error:", e2)
-            summary_data = {
-                "overall_summary": "Could not be extracted",
-                "symptoms": "Could not be extracted",
-                "duration": "Could not be extracted",
-                "suggested_tests": "Could not be extracted"
-            }
+        import traceback
+        error_detail = traceback.format_exc()
+        print("CRITICAL Summarization error:\n", error_detail)
+        summary_data = {
+            "subjective": f"Summarization failed. Backend error: {str(e)}",
+            "objective": "Please check backend console logs for details.",
+            "assessment": "ERROR",
+            "plan": "Retry requested",
+            "metadata": {"disfluency_level": "N/A", "demeanor_note": "N/A"}
+        }
     
     
     try:
@@ -295,21 +389,35 @@ async def summarize_consultation(req: SummaryRequest = SummaryRequest()):
         print(f"DEBUG: Raw Summary Text from LLM: {summary_text}")
         print(f"DEBUG: Parsed Summary Data: {summary_data}")
 
+        if not isinstance(summary_data, dict):
+            summary_data = {
+                "subjective": str(summary_data),
+                "objective": "Not recorded",
+                "assessment": "Summarization produced invalid data",
+                "plan": "Review transcript manually",
+                "metadata": {"disfluency_level": "Unknown", "demeanor_note": "N/A"}
+            }
+
+        metadata = summary_data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
         summary = {
-            "overall_summary": _safe_str(summary_data.get("overall_summary", "")),
-            "symptoms": _safe_str(summary_data.get("symptoms", "")),
-            "duration": _safe_str(summary_data.get("duration", "")),
-            "suggested_tests": _safe_str(summary_data.get("suggested_tests", "")),
+            "subjective": _safe_str(summary_data.get("subjective", "")),
+            "objective": _safe_str(summary_data.get("objective", "")),
+            "assessment": _safe_str(summary_data.get("assessment", "")),
+            "plan": _safe_str(summary_data.get("plan", "")),
+            "disfluency_level": _safe_str(metadata.get("disfluency_level", "Unknown")),
+            "demeanor_note": _safe_str(metadata.get("demeanor_note", "N/A")),
             "full_transcript": transcript
         }
         
         cursor.execute(
-            "INSERT INTO consultation_summaries (overall_summary, symptoms, duration, suggested_tests, full_transcript) VALUES (?, ?, ?, ?, ?)",
-            (summary["overall_summary"], summary["symptoms"], summary["duration"], summary["suggested_tests"], summary["full_transcript"])
+            "INSERT INTO consultation_summaries (subjective, objective, assessment, plan, disfluency_level, demeanor_note, full_transcript) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (summary["subjective"], summary["objective"], summary["assessment"], summary["plan"], summary["disfluency_level"], summary["demeanor_note"], summary["full_transcript"])
         )
         
-        # Remove the conversation completely from the database per user request
-        cursor.execute("DELETE FROM conversation_logs")
+        # We no longer clear here so user can go back and update.
         
         conn.commit()
     except Exception as db_err:
@@ -323,6 +431,23 @@ async def summarize_consultation(req: SummaryRequest = SummaryRequest()):
         return {
             "error": "Failed to create summary."
         }
+
+@app.post("/api/log")
+async def log_transcription(req: TranslationRequest):
+    # This endpoint is used to auto-log transcription segments
+    try:
+        conn = sqlite3.connect("consultations.db")
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO conversation_logs (speaker, original_text, translated_text, source_language, target_language) VALUES (?, ?, ?, ?, ?)",
+            (req.speaker, req.text, req.text, "en-IN", "en-IN") # Default to en for raw logs
+        )
+        conn.commit()
+        conn.close()
+        return {"status": "success", "text": req.text}
+    except Exception as e:
+        print("Auto-log error:", e)
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/logs")
 async def get_logs():
