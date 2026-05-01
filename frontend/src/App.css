@@ -628,3 +628,4 @@ button:hover {
 .left-panel, .right-panel {
   overflow-x: hidden;
 }
+.log-timestamp { font-size: 0.75rem; color: #95a5a6; text-align: right; margin-top: 8px; clear: both; }

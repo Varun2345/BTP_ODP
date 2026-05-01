@@ -6,7 +6,7 @@ from faster_whisper import WhisperModel
 # --- CONFIGURATION ---
 MODEL_SIZE = "small" # Start with small for fast execution. Use "large-v3" for best accuracy.
 SHORT_PAUSE_THRESHOLD = 0.5 # Reverted to stable value
-LONG_PAUSE_THRESHOLD = 2.0  # seconds
+LONG_PAUSE_THRESHOLD = 3.0  # seconds
 VERY_LONG_PAUSE_THRESHOLD = 5.0 # seconds
 # Silences > 5s show as [Pause: Xs]
 
@@ -26,7 +26,7 @@ def run_pipeline(audio_path: str):
     print("\n[STAGE 1] Transcribing with Singleton Model...")
     
     # MAGIC TRICK: This prompt forces Whisper to keep filler words instead of deleting them.
-    asr_prompt = "Um, uh, basically, the patient, uh, said they were tired."
+    asr_prompt = "Uhm, well, uh, basically, I mean, the patient, um, said... like... they were tired, ah."
     
     # Transcribe the audio
     segments, _ = MODEL.transcribe(
@@ -35,7 +35,10 @@ def run_pipeline(audio_path: str):
         initial_prompt=asr_prompt,  
         condition_on_previous_text=False,
         vad_filter=False,          # Capture silence as requested
-        no_speech_threshold=0.6    # Security guard against static/ambient noise
+        no_speech_threshold=0.6,   # Security guard against static/ambient noise
+        suppress_blank=False,      # Allow the model to output blank/hesitation tokens
+        suppress_tokens=None,      # Remove all built-in token suppressions to keep fillers
+        temperature=[0.0, 0.2, 0.4] # Try literal first, then loosen up for less common tokens
     )
     
     # Flatten the generator into a list of word objects with HALLUCINATION GUARD
@@ -125,8 +128,11 @@ def run_pipeline(audio_path: str):
         if pause_val >= VERY_LONG_PAUSE_THRESHOLD:
              # Significant duration -> Pause tag
             final_text_parts.append(f"{text} [Pause: {int(pause_val)}s]")
+        elif pause_val >= LONG_PAUSE_THRESHOLD:
+            # 3 to 5 seconds -> 5 dots
+            final_text_parts.append(f"{text}.....")
         elif pause_val >= SHORT_PAUSE_THRESHOLD:
-            # All other pauses simply get dots
+            # 0.5 to 3 seconds -> 3 dots
             final_text_parts.append(f"{text}...")
         else:
             final_text_parts.append(text)

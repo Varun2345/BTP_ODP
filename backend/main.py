@@ -408,8 +408,9 @@ async def summarize_consultation(selected_model: str = "llama-3.3-70b-versatile"
             "assessment": _safe_str(summary_data.get("assessment", "")),
             "plan": _safe_str(summary_data.get("plan", "")),
             "disfluency_level": _safe_str(metadata.get("disfluency_level", "Unknown")),
-            "demeanor_note": _safe_str(metadata.get("demeanor_note", "N/A")),
-            "full_transcript": transcript
+            "demeanor_note": _safe_str(metadata.get("demeanor_note", metadata.get("observation", "N/A"))),
+            "full_transcript": transcript,
+            "metadata": metadata
         }
         
         cursor.execute(
@@ -454,11 +455,11 @@ async def get_logs():
     """Retrieve all existing logs from the database."""
     conn = sqlite3.connect("consultations.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT speaker, original_text, translated_text FROM conversation_logs ORDER BY timestamp ASC")
+    cursor.execute("SELECT speaker, original_text, translated_text, timestamp FROM conversation_logs ORDER BY timestamp ASC")
     rows = cursor.fetchall()
     conn.close()
     
-    logs = [{"speaker": r[0], "original": r[1], "translated": r[2]} for r in rows]
+    logs = [{"speaker": r[0], "original": r[1], "translated": r[2], "timestamp": r[3]} for r in rows]
     return {"logs": logs}
 
 @app.post("/api/clear")
