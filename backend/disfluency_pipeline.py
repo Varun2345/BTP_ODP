@@ -41,16 +41,9 @@ def run_pipeline(audio_path: str):
         temperature=[0.0, 0.2, 0.4] # Try literal first, then loosen up for less common tokens
     )
     
-    # Flatten the generator into a list of word objects with HALLUCINATION GUARD
     raw_words = []
     filler_words = ["um", "uh", "uhm", "err", "ah", "basically", "like", "actually", "mean"]
     
-    # regex for allowed characters: English, Hindi, Telugu, Tamil, Kannada + basic punctuation
-    # \u0000-\u007F: Basic Latin
-    # \u0900-\u097F: Devanagari
-    # \u0C00-\u0C7F: Telugu
-    # \u0B80-\u0BFF: Tamil
-    # \u0C80-\u0CFF: Kannada
     import re
     ALLOWED_CHARS_REGEX = re.compile(r'^[\u0000-\u007F\u0900-\u097F\u0C00-\u0C7F\u0B80-\u0BFF\u0C80-\u0CFF\s.,?!\'\"\[\]:()\-]+$')
 
@@ -86,7 +79,7 @@ def run_pipeline(audio_path: str):
             })
 
     if not raw_words:
-        print("❌ No speech detected.")
+        print("No speech detected.")
         return None
 
     # ==========================================
@@ -162,7 +155,7 @@ if __name__ == "__main__":
             import pprint
             pprint.pprint(result)
         else:
-            print(f"❌ Error: The file '{test_audio}' was not found.")
+            print(f"Error: The file '{test_audio}' was not found.")
     else:
         print("\nTo test this, provide a path to a .wav or .mp3 file:")
         print("Usage: python disfluency_pipeline.py <path_to_audio_file>")

@@ -1,5 +1,17 @@
 # OPD Consultation Assistant
-This project uses a React frontend and FastAPI Python backend.
+
+## How to Run the Application
+
+1. Clone the repository.
+2. Ensure you have your `.env` file with the required API keys (GROQ, GEMINI, BHASHINI, etc.) placed inside the `backend` folder.
+3. Run the following command in your terminal from the root directory:
+   ```bash
+   ./start.sh
+   ```
+
+*The script will automatically install any missing dependencies and start both the backend and frontend servers.*
+# Alternative 
+# OPD Consultation Assistant
 
 ## How to Set Up and Run
 
@@ -18,9 +30,7 @@ This project uses a React frontend and FastAPI Python backend.
    pip install -r requirements.txt
    ```
 4. Configure your API Keys:
-   Open `OPD/backend/.env` and replace the placeholder values with your real API keys:
-   * `BHASHINI_API_KEY` (for translations/ASR/TTS)
-   * `GROQ_API_KEY` / `GEMINI_API_KEY` (for consultation summarization)
+   Open `OPD/backend/.env` and replace the placeholder values with your real API keys.
 
 5. Run the backend server:
    ```bash
@@ -44,15 +54,3 @@ This project uses a React frontend and FastAPI Python backend.
    *The frontend will open in your browser at `http://localhost:3000`.*
 
 ---
-
-## Where to Place Your API Hooks
-Your scaffolding is prepared! To make it fully functional:
-
-**Backend (`OPD/backend/main.py`)**:
-- Look for `@app.post("/api/translate")`: This is where you should replace the `dummy_translation` using the `google-generativeai`, `groq`, or Bhashini API calls using the keys loaded from `.env`.
-- Look for `@app.post("/api/summarize")`: Pass the `transcript` variable to your chosen LLM instead of returning the dummy summary dictionary.
-
-**Frontend (`OPD/frontend/src/App.js`)**:
-- Right now, interaction uses text boxes as substitutes for Speech-to-Text.
-- Integrate the standard Web Speech API (or external ASR API) to populate `inputText` automatically.
-- Look for `// NOTE: Here is where you would hook up TTS` inside `handleSpeak` to trigger browser speech synthesis using the `res.data.translated` response from your backend.
